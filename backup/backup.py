@@ -728,7 +728,7 @@ def _iterar_emails_filtrados(inbox, mes, ano, usar_restrict=True):
         inicio_str, fim_str = _datas_restrict(mes, ano)
         filtro = f"[ReceivedTime] >= '{inicio_str}' AND [ReceivedTime] < '{fim_str}'"
         mensagens = inbox.Items.Restrict(filtro)
-        mensagens.Sort("[ReceivedTime]", False)
+        mensagens.Sort("[ReceivedTime]", True)
         try:
             total = mensagens.Count
         except Exception:
@@ -736,7 +736,7 @@ def _iterar_emails_filtrados(inbox, mes, ano, usar_restrict=True):
         return mensagens, total
     else:
         mensagens = inbox.Items
-        mensagens.Sort("[ReceivedTime]", False)
+        mensagens.Sort("[ReceivedTime]", True)
         filtradas = []
         total = mensagens.Count
         for i in range(total):
@@ -759,7 +759,7 @@ def _iterar_emails_filtrados_dia(inbox, dia, mes, ano, usar_restrict=True):
         inicio_str, fim_str = _datas_restrict_dia(dia, mes, ano)
         filtro = f"[ReceivedTime] >= '{inicio_str}' AND [ReceivedTime] < '{fim_str}'"
         mensagens = inbox.Items.Restrict(filtro)
-        mensagens.Sort("[ReceivedTime]", False)
+        mensagens.Sort("[ReceivedTime]", True)
         try:
             total = mensagens.Count
         except Exception:
@@ -767,7 +767,7 @@ def _iterar_emails_filtrados_dia(inbox, dia, mes, ano, usar_restrict=True):
         return mensagens, total
     else:
         mensagens = inbox.Items
-        mensagens.Sort("[ReceivedTime]", False)
+        mensagens.Sort("[ReceivedTime]", True)
         filtradas = []
         total = mensagens.Count
         for i in range(total):

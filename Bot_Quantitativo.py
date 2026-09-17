@@ -15,7 +15,7 @@ import unicodedata
 from typing import Optional, Set, Dict
 
 from openpyxl import load_workbook
-from excel_xlsxwriter import ler_planilhas, escrever_planilhas
+from openpyxl.styles import PatternFill, Border, Side, Font
 
 
 # =========================
@@ -106,13 +106,30 @@ def carregar_itens_txt(base_dir: Optional[str] = None, nome_arquivo: str = "iten
 # Estilo/Format
 # =========================
 
-def _formatar_quantitativo_xlsxwriter(nome_aba, linha, coluna, valor):
-    if nome_aba != "Quantitativo":
-        return {}
-    opcoes = {"border": 1} if coluna < 4 else {}
-    if linha == 0 and coluna < 4:
-        opcoes.update({"bold": True, "bg_color": "#B4C6E7"})
-    return opcoes
+THIN_BORDER = Border(
+    left=Side(style="thin"),
+    right=Side(style="thin"),
+    top=Side(style="thin"),
+    bottom=Side(style="thin"),
+)
+
+HEADER_FILL = PatternFill(start_color="B4C6E7", end_color="B4C6E7", fill_type="solid")
+HEADER_FONT = Font(bold=True)
+
+
+def _formatar_cabecalho(ws) -> None:
+    headers = ["Gestor", "ETP", "BOM Code", "Quantidade"]
+    for col, texto in enumerate(headers, start=1):
+        cell = ws.cell(row=1, column=col, value=texto)
+        cell.font = HEADER_FONT
+        cell.fill = HEADER_FILL
+        cell.border = THIN_BORDER
+
+
+def _aplicar_borda_tabela(ws, max_row: int, max_col: int) -> None:
+    for r in range(1, max_row + 1):
+        for c in range(1, max_col + 1):
+            ws.cell(row=r, column=c).border = THIN_BORDER
 
 
 # =========================
@@ -200,49 +217,67 @@ def atualizar_aba_quantitativo(
         print("[Quant][ERRO] ETP não informada (etp_display/etp_norm vazios).")
         return
 
-    planilhas = ler_planilhas(caminho_planilha_controle)
-    quantitativo_aba = next((item for item in planilhas if item["nome"] == "Quantitativo"), None)
-    if quantitativo_aba is None:
-        quantitativo_aba = {"nome": "Quantitativo", "linhas": [["Gestor", "ETP", "BOM Code", "Quantidade"]]}
-        planilhas.append(quantitativo_aba)
-
-    linhas = quantitativo_aba["linhas"]
-    if not linhas or not linhas[0] or linhas[0][0] is None:
-        linhas.insert(0, ["Gestor", "ETP", "BOM Code", "Quantidade"])
-    else:
-        linhas[0] = (linhas[0] + [None] * 4)[:4]
-        linhas[0][:4] = ["Gestor", "ETP", "BOM Code", "Quantidade"]
-
-    linhas_originais = linhas[1:]
-    linhas_filtradas = []
-    removed = 0
-    for linha in linhas_originais:
-        etp_existente = linha[1] if len(linha) > 1 else None
-        if normalizar_etp(etp_existente) == etp_norm_local:
-            removed += 1
+    wb = load_workbook(caminho_planilha_controle)
+    try:
+        if "Quantitativo" in wb.sheetnames:
+            ws = wb["Quantitativo"]
+            # garante cabeçalho
+            if ws.max_row < 1 or ws["A1"].value is None:
+                _formatar_cabecalho(ws)
         else:
-            linhas_filtradas.append(linha)
+            ws = wb.create_sheet("Quantitativo")
+            _formatar_cabecalho(ws)
 
-    if removed:
-        print(f"[Quant] Removidas {removed} linhas antigas da ETP {etp_norm_local} (evita duplicação)")
+        # 1) Remove linhas existentes da mesma ETP
+        # (iterar de baixo pra cima pra não bagunçar índices)
+        removed = 0
+        for r in range(ws.max_row, 1, -1):
+            b = ws.cell(row=r, column=2).value  # ETP col B
+            if normalizar_etp(b) == etp_norm_local:
+                ws.delete_rows(r, 1)
+                removed += 1
 
-    etp_to_write = etp_display or etp_norm_local
-    gestor_to_write = gestor or ""
-    inseridas = []
-    for code in sorted(quantitativo.keys()):
-        qtd = quantitativo[code]
-        if qtd <= 0:
-            continue
-        qtd_gravada = int(qtd) if abs(qtd - int(qtd)) < 1e-9 else float(qtd)
-        inseridas.append([gestor_to_write, etp_to_write, code, qtd_gravada])
+        if removed:
+            print(f"[Quant] Removidas {removed} linhas antigas da ETP {etp_norm_local} (evita duplicação)")
 
-    quantitativo_aba["linhas"] = [linhas[0]] + linhas_filtradas + inseridas
-    escrever_planilhas(
-        caminho_planilha_controle,
-        planilhas,
-        _formatar_quantitativo_xlsxwriter,
-    )
-    print(f"[Quant] OK | ETP={etp_norm_local} | Inseridos={len(inseridas)} | Planilha atualizada")
+        # 2) Insere itens novos
+        next_row = ws.max_row + 1
+        etp_to_write = etp_display or etp_norm_local
+        gestor_to_write = gestor or ""
+
+        inserted = 0
+        for code in sorted(quantitativo.keys()):
+            qtd = quantitativo[code]
+            if qtd <= 0:
+                continue
+
+            ws.cell(row=next_row, column=1, value=gestor_to_write)
+            ws.cell(row=next_row, column=2, value=etp_to_write)
+            ws.cell(row=next_row, column=3, value=code)
+            # se for inteiro "perfeito", grava como int (fica mais bonito)
+            if abs(qtd - int(qtd)) < 1e-9:
+                ws.cell(row=next_row, column=4, value=int(qtd))
+            else:
+                ws.cell(row=next_row, column=4, value=float(qtd))
+
+            next_row += 1
+            inserted += 1
+
+        # 3) Bordas na área usada (A:D)
+        max_row = ws.max_row
+        _aplicar_borda_tabela(ws, max_row=max_row, max_col=4)
+
+        # 4) Cabeçalho com estilo (garante)
+        _formatar_cabecalho(ws)
+
+        wb.save(caminho_planilha_controle)
+        print(f"[Quant] OK | ETP={etp_norm_local} | Inseridos={inserted} | Planilha atualizada ✅")
+
+    finally:
+        try:
+            wb.close()
+        except Exception:
+            pass
 
 
 # =========================
