@@ -62,6 +62,15 @@ _PADROES = {
 }
 PADROES_CORPO = { remover_acentos(k.lower()): v for k, v in _PADROES.items() }
 
+#Enum Status
+
+STATUS_ORDEM = {
+    "Enviado": 1,
+    "Pending T2": 2,
+    "T2 Enviado": 3,
+    "PO Received": 4,
+}
+
 # Variáveis globais de contagem
 TOTAL_EMAILS_ENCONTRADOS = 0
 EMAILS_FILTRADOS = 0
@@ -207,8 +216,16 @@ def status_por_chave_de_controle(corpo):
 def normalizar_etp(etp):
     if not etp:
         return ""
-    etp = re.sub(r'\D', '', str(etp))
-    return f"{etp[:4]}-{etp[4:]}" if len(etp) == 8 else etp.strip()
+    digitos = re.sub(r'\D', '', str(etp))
+    if len(digitos) >= 8:
+        return f"{digitos[:4]}-{digitos[4:8]}"
+    return str(etp).strip()
+
+def ordem_status(status):
+    status_normalizado = _norm_status(status)
+    if status_normalizado == "t2 enviada":
+        status_normalizado = "t2 enviado"
+    return STATUS_ORDEM.get(status, STATUS_RANK.get(status_normalizado, 0))
 
 def extrair_etp_do_assunto(assunto):
     if not assunto:
@@ -436,6 +453,35 @@ def separaContexto(etp_norm):
 
     return descritivo, etp_norm
 
+def sobreEscreveStatus(status, sheet, wb, row, valor_etp_col7):
+
+    # merge/anti-retrocesso
+        status_atual = sheet.cell(row=row, column=COL_STATUS).value
+        status_final, mudou_status, motivo_status = _merge_status(status_atual, status)
+
+     # formatação/cor/borda nas G,H,O,Q,R,S
+        status_para_formatar = status_final if mudou_status else status_atual
+        _apply_row_style(sheet, row, status_para_formatar)
+                              
+        # APLICA all-borders na tabela toda + garante Q/R/S = BRL contábil
+        _apply_global_table_style(sheet)
+                              
+        wb.save(CAMINHO_PLANILHA_CONTROLE); wb.close()
+                              
+        #======== LOG ========#
+        _log_resumo(
+            "Atualizado",
+            valor_etp_col7,
+            status_para_formatar or "(vazio)",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            extra=f"status_only={True}"""
+        )
+
 def sobreEscrever(
     gestor,
     status,
@@ -535,7 +581,10 @@ def atualizar_planilha(
             celula_bruta = sheet.cell(row=row, column=COL_ETP).value
             celula_etp_norm = normalizar_etp(str(celula_bruta))
             descritivo_comparado = sheet.cell(row=row, column=COL_DESCRITIVO).value
-            if celula_etp_norm == etp_norm:
+            status_comparado = sheet.cell(row=row, column=COL_STATUS).value
+            if celula_etp_norm == normalizar_etp(etp_norm):
+                descritivo = descritivo or ""
+                descritivo_comparado = descritivo_comparado or ""
                 if ("AD" in descritivo and "AD" not in descritivo_comparado):
                     continue
                 elif ("H1" in descritivo and "H1" not in descritivo_comparado):
@@ -565,12 +614,21 @@ def atualizar_planilha(
                         if versao > versao_comparado:
                             relacao = 1
                         if versao == versao_comparado:
-                            relacao = 1
+                            relacao = 2
                     except Exception:
                         relacao = 0
 
                     if versao_comparado == None or relacao == 1:
                         sobreEscrever(gestor, status, preco, qnt_sites, valor_r, valor_s, estados, status_only, row, wb, sheet, descritivo, valor_etp_col7)
+                        return "updated", row
+
+                    elif relacao == 2:
+                        if ordem_status(status) > ordem_status(status_comparado):
+                            sobreEscreveStatus(status, sheet, wb, row, valor_etp_col7)
+                            return "updated", row
+
+                    elif ordem_status(status) > ordem_status(status_comparado):
+                        sobreEscreveStatus(status, sheet, wb, row, valor_etp_col7)
                         return "updated", row
 
                     elif (versao == None):

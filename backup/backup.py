@@ -62,6 +62,15 @@ _PADROES = {
 }
 PADROES_CORPO = { remover_acentos(k.lower()): v for k, v in _PADROES.items() }
 
+#Enum Status
+
+STATUS_ORDEM = {
+    "Enviado": 1,
+    "Pending T2": 2,
+    "T2 Enviado": 3,
+    "PO Received": 4,
+}
+
 # Variáveis globais de contagem
 TOTAL_EMAILS_ENCONTRADOS = 0
 EMAILS_FILTRADOS = 0
@@ -436,6 +445,35 @@ def separaContexto(etp_norm):
 
     return descritivo, etp_norm
 
+def sobreEscreveStatus(status, sheet, wb, row, valor_etp_col7):
+
+    # merge/anti-retrocesso
+        status_atual = sheet.cell(row=row, column=COL_STATUS).value
+        status_final, mudou_status, motivo_status = _merge_status(status_atual, status)
+
+     # formatação/cor/borda nas G,H,O,Q,R,S
+        status_para_formatar = status_final if mudou_status else status_atual
+        _apply_row_style(sheet, row, status_para_formatar)
+                              
+        # APLICA all-borders na tabela toda + garante Q/R/S = BRL contábil
+        _apply_global_table_style(sheet)
+                              
+        wb.save(CAMINHO_PLANILHA_CONTROLE); wb.close()
+                              
+        #======== LOG ========#
+        _log_resumo(
+            "Atualizado",
+            valor_etp_col7,
+            status_para_formatar or "(vazio)",
+            None,
+            None,
+            None,
+            None,
+            None,
+            None,
+            extra=f"status_only={True}"""
+        )
+
 def sobreEscrever(
     gestor,
     status,
@@ -535,6 +573,7 @@ def atualizar_planilha(
             celula_bruta = sheet.cell(row=row, column=COL_ETP).value
             celula_etp_norm = normalizar_etp(str(celula_bruta))
             descritivo_comparado = sheet.cell(row=row, column=COL_DESCRITIVO).value
+            status_comparado = sheet.cell(row=row, column=COL_STATUS).value
             if celula_etp_norm == etp_norm:
                 if ("AD" in descritivo and "AD" not in descritivo_comparado):
                     continue
@@ -565,12 +604,21 @@ def atualizar_planilha(
                         if versao > versao_comparado:
                             relacao = 1
                         if versao == versao_comparado:
-                            relacao = 1
+                            relacao = 2
                     except Exception:
                         relacao = 0
 
                     if versao_comparado == None or relacao == 1:
                         sobreEscrever(gestor, status, preco, qnt_sites, valor_r, valor_s, estados, status_only, row, wb, sheet, descritivo, valor_etp_col7)
+                        return "updated", row
+
+                    elif relacao == 2:
+                        if STATUS_ORDEM[status] > STATUS_ORDEM[status_comparado]:
+                            sobreEscreveStatus(status, sheet, wb, row, valor_etp_col7)
+                            return "updated", row
+
+                    elif STATUS_ORDEM[status] > STATUS_ORDEM[status_comparado]:
+                        sobreEscreveStatus(status, sheet, wb, row, valor_etp_col7)
                         return "updated", row
 
                     elif (versao == None):
@@ -728,7 +776,7 @@ def _iterar_emails_filtrados(inbox, mes, ano, usar_restrict=True):
         inicio_str, fim_str = _datas_restrict(mes, ano)
         filtro = f"[ReceivedTime] >= '{inicio_str}' AND [ReceivedTime] < '{fim_str}'"
         mensagens = inbox.Items.Restrict(filtro)
-        mensagens.Sort("[ReceivedTime]", True)
+        mensagens.Sort("[ReceivedTime]", False)
         try:
             total = mensagens.Count
         except Exception:
@@ -736,7 +784,7 @@ def _iterar_emails_filtrados(inbox, mes, ano, usar_restrict=True):
         return mensagens, total
     else:
         mensagens = inbox.Items
-        mensagens.Sort("[ReceivedTime]", True)
+        mensagens.Sort("[ReceivedTime]", False)
         filtradas = []
         total = mensagens.Count
         for i in range(total):
@@ -759,7 +807,7 @@ def _iterar_emails_filtrados_dia(inbox, dia, mes, ano, usar_restrict=True):
         inicio_str, fim_str = _datas_restrict_dia(dia, mes, ano)
         filtro = f"[ReceivedTime] >= '{inicio_str}' AND [ReceivedTime] < '{fim_str}'"
         mensagens = inbox.Items.Restrict(filtro)
-        mensagens.Sort("[ReceivedTime]", True)
+        mensagens.Sort("[ReceivedTime]", False)
         try:
             total = mensagens.Count
         except Exception:
@@ -767,7 +815,7 @@ def _iterar_emails_filtrados_dia(inbox, dia, mes, ano, usar_restrict=True):
         return mensagens, total
     else:
         mensagens = inbox.Items
-        mensagens.Sort("[ReceivedTime]", True)
+        mensagens.Sort("[ReceivedTime]", False)
         filtradas = []
         total = mensagens.Count
         for i in range(total):
